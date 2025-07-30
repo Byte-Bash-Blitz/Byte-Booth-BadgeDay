@@ -1,0 +1,63 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-sans bg-gray-950 min-h-screen text-white;
+  }
+}
+
+@layer components {
+  .btn-celebration {
+    @apply bg-gradient-to-r from-green-500 via-blue-500 to-purple-500 
+           text-white font-semibold py-3 px-6 rounded-xl
+           hover:from-green-600 hover:via-blue-600 hover:to-purple-600
+           transition-all duration-300 transform hover:scale-105
+           shadow-lg hover:shadow-xl;
+  }
+  
+  .card-celebration {
+    @apply bg-gray-900/80 backdrop-blur-sm rounded-2xl p-6 shadow-xl
+           border border-gray-800 hover:shadow-2xl transition-all duration-300;
+  }
+  
+  .gradient-text {
+    @apply bg-gradient-to-r from-green-400 via-blue-400 to-purple-400 
+           bg-clip-text text-transparent font-display font-bold;
+  }
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
