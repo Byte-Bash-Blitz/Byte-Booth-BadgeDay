@@ -103,9 +103,9 @@ function AppContent() {
     }
   };
 
-  const handleCameraCapture = (file) => {
+  const handleCameraCapture = (file, caption = '') => {
     setShowCamera(false);
-    handlePhotoUpload(file, ''); // Camera photos start with empty caption
+    handlePhotoUpload(file, caption); // Camera photos now include caption
   };
 
   return (
