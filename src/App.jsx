@@ -120,9 +120,9 @@ function AppContent() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-white">
-                  Byte Bash Blitz
+                  Byte Booth
                 </h1>
-                <p className="text-xs text-gray-400">Photo Booth Platform</p>
+                <p className="hidden sm:block text-xs text-gray-400">Photo Booth</p>
               </div>
             </div>
             

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Heart, Download, Clock, RefreshCw, MessageCircle, Share, Bookmark, MoreHorizontal, User, SortDesc, TrendingUp, Calendar, LogOut, Shuffle } from 'lucide-react';
 import { generateDownloadUrl } from '../lib/cloudflare';
 import { togglePhotoLike } from '../lib/photoService';
@@ -7,8 +7,11 @@ import { useAuth } from '../contexts/AuthContext';
 const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
   const [imageUrls, setImageUrls] = useState({}); // Cache for presigned view URLs
   const [userLikes, setUserLikes] = useState({}); // Track user's likes
+  const [localPhotos, setLocalPhotos] = useState([]); // Local copy for optimistic updates
+  const [likingPhotos, setLikingPhotos] = useState(new Set()); // Track photos being liked
   const [sortBy, setSortBy] = useState('random'); // 'random', 'recent', 'likes', 'trending'
   const [shuffleSeed, setShuffleSeed] = useState(Math.random()); // For consistent random order
+  const [initializedWithPhotos, setInitializedWithPhotos] = useState(false); // Track initialization
   const { user, logout } = useAuth();
   const userId = user?.id || 'anonymous';
 
@@ -52,7 +55,21 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
     }
   ];
 
-  const displayPhotos = photos.length > 0 ? photos : mockPhotos;
+  // Initialize with mock data or real photos, but avoid constant updates
+  useEffect(() => {
+    if (photos.length > 0 && !initializedWithPhotos) {
+      // First time we get real photos - initialize
+      setLocalPhotos(photos);
+      setInitializedWithPhotos(true);
+    } else if (photos.length === 0 && localPhotos.length === 0) {
+      // No photos at all - use mock data
+      setLocalPhotos(mockPhotos);
+    }
+    // Don't update localPhotos for subsequent photo changes to prevent flickering
+  }, [photos.length, initializedWithPhotos]);
+
+  // Use either local photos or mock photos, but don't constantly switch
+  const displayPhotos = localPhotos.length > 0 ? localPhotos : mockPhotos;
 
   // Sort photos based on selected criteria
   const sortedPhotos = (() => {
@@ -81,30 +98,92 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
     }
   })();
 
-  // Handle like functionality
-  const handleLike = async (photo) => {
+  // Check if user has liked a photo (memoized to prevent flickering)
+  const isLiked = useCallback((photo) => {
+    // Check userLikes first (most up-to-date optimistic state)
+    if (userLikes.hasOwnProperty(photo.id)) {
+      return userLikes[photo.id];
+    }
+    // Fallback to photo's likedBy array
+    return photo.likedBy?.includes(userId) || false;
+  }, [userLikes, userId]);
+
+  // Handle like functionality with optimistic updates (prevent double flickering with batched updates)
+  const handleLike = useCallback(async (photo) => {
+    // Prevent double-clicking
+    if (likingPhotos.has(photo.id)) return;
+    
+    const wasLiked = isLiked(photo);
+    const newLiked = !wasLiked;
+    const newLikeCount = Math.max(0, (photo.likes || 0) + (newLiked ? 1 : -1));
+    
+    // Batch all state updates together using React.unstable_batchedUpdates equivalent (React 18+ auto-batches)
+    // Add to liking set for visual feedback
+    setLikingPhotos(prev => new Set([...prev, photo.id]));
+    
+    // Update user likes state
+    setUserLikes(prev => ({
+      ...prev,
+      [photo.id]: newLiked
+    }));
+
+    // Update local photos state in the same render cycle
+    setLocalPhotos(prevPhotos => 
+      prevPhotos.map(p => {
+        if (p.id === photo.id) {
+          const updatedLikedBy = newLiked 
+            ? [...(p.likedBy || []).filter(id => id !== userId), userId] // Ensure no duplicates
+            : (p.likedBy || []).filter(id => id !== userId);
+          
+          return {
+            ...p,
+            likes: newLikeCount,
+            likedBy: updatedLikedBy
+          };
+        }
+        return p;
+      })
+    );
+    
+    // Background sync - but don't update state on success to avoid flickering
     try {
-      const result = await togglePhotoLike(photo.id, userId);
+      await togglePhotoLike(photo.id, userId);
+      // Success: Don't update state again - optimistic update was correct
+    } catch (error) {
+      console.error('Failed to sync like to server:', error);
       
-      // Update local state immediately for responsive UI
+      // Only revert on error - batch the reverts too
       setUserLikes(prev => ({
         ...prev,
-        [photo.id]: result.liked
+        [photo.id]: wasLiked
       }));
       
-      // Update photos array if onRefresh is available
-      if (onRefresh) {
-        onRefresh();
-      }
-    } catch (error) {
-      console.error('Failed to toggle like:', error);
+      setLocalPhotos(prevPhotos => 
+        prevPhotos.map(p => {
+          if (p.id === photo.id) {
+            return {
+              ...p,
+              likes: photo.likes || 0,
+              likedBy: photo.likedBy || []
+            };
+          }
+          return p;
+        })
+      );
+      
+      // Show subtle error feedback
+      console.warn('Like sync failed, reverted to previous state');
+    } finally {
+      // Remove from liking set after a short delay for better UX
+      setTimeout(() => {
+        setLikingPhotos(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(photo.id);
+          return newSet;
+        });
+      }, 300);
     }
-  };
-
-  // Check if user has liked a photo
-  const isLiked = (photo) => {
-    return userLikes[photo.id] || photo.likedBy?.includes(userId);
-  };
+  }, [likingPhotos, userId, isLiked]);
 
   // Generate avatar for any user
   const getAuthorAvatar = (authorName) => {
@@ -300,10 +379,11 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
     }
   };
 
-  // Instagram-style Feed Post Component
-  const FeedPost = ({ photo }) => {
+  // Instagram-style Feed Post Component (memoized to prevent unnecessary re-renders)
+  const FeedPost = React.memo(({ photo }) => {
     const liked = isLiked(photo);
     const isOwnPost = photo.authorId === userId;
+    const isLiking = likingPhotos.has(photo.id);
     
     return (
       <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden mb-6">
@@ -346,11 +426,15 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
             <div className="flex items-center space-x-4">
               <button
                 onClick={() => handleLike(photo)}
-                className={`transition-colors ${
+                disabled={isLiking}
+                className={`transition-all duration-200 relative ${
                   liked ? 'text-red-500' : 'text-gray-400 hover:text-red-400'
-                }`}
+                } ${isLiking ? 'scale-110' : 'hover:scale-105'}`}
               >
                 <Heart className={`w-6 h-6 ${liked ? 'fill-current' : ''}`} />
+                {isLiking && (
+                  <div className="absolute inset-0 rounded-full animate-ping bg-red-400 opacity-20"></div>
+                )}
               </button>
               <button className="text-gray-400 hover:text-white transition-colors">
                 <MessageCircle className="w-6 h-6" />
@@ -393,7 +477,7 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
         </div>
       </div>
     );
-  };
+  });
 
   if (isLoading) {
     return (
@@ -434,9 +518,14 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
         <div className="flex items-center gap-2">
           {onRefresh && (
             <button
-              onClick={onRefresh}
+              onClick={() => {
+                // Manual refresh - only when user explicitly requests it
+                // This will reload from server but maintain optimistic updates
+                setInitializedWithPhotos(false); // Allow re-initialization
+                onRefresh();
+              }}
               className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors text-gray-300 hover:text-white"
-              title="Refresh feed"
+              title="Refresh feed (get latest posts)"
             >
               <RefreshCw className="w-5 h-5" />
             </button>
