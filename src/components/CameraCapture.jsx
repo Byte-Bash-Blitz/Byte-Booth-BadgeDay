@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Upload, X, AlertCircle, Type, RotateCcw } from 'lucide-react';
+import { Camera, Upload, X, AlertCircle, Type, RotateCcw, SwitchCamera } from 'lucide-react';
 
 const CameraCapture = ({ onPhotoCapture, onClose }) => {
   const [stream, setStream] = useState(null);
@@ -7,6 +7,8 @@ const CameraCapture = ({ onPhotoCapture, onClose }) => {
   const [capturedImage, setCapturedImage] = useState(null);
   const [caption, setCaption] = useState('');
   const [showCaptionForm, setShowCaptionForm] = useState(false);
+  const [facingMode, setFacingMode] = useState('user'); // 'user' for front, 'environment' for back
+  const [isLoading, setIsLoading] = useState(false);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null); // Use ref to track stream for cleanup
@@ -21,10 +23,17 @@ const CameraCapture = ({ onPhotoCapture, onClose }) => {
     };
   }, []); // Empty dependency array - only run once on mount
 
-  const startCamera = async () => {
+  const startCamera = async (targetFacingMode = facingMode) => {
     try {
+      setIsLoading(true);
+      
+      // Stop existing stream if any
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' },
+        video: { facingMode: targetFacingMode },
         audio: false
       });
       
@@ -37,7 +46,15 @@ const CameraCapture = ({ onPhotoCapture, onClose }) => {
     } catch (error) {
       console.error('Error accessing camera:', error);
       alert('Could not access camera. Please check permissions.');
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  const switchCamera = async () => {
+    const newFacingMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(newFacingMode);
+    await startCamera(newFacingMode);
   };
 
   const capturePhoto = () => {
@@ -200,16 +217,44 @@ const CameraCapture = ({ onPhotoCapture, onClose }) => {
                   ref={canvasRef}
                   className="hidden"
                 />
+                
+                {/* Camera Switch Button */}
+                <button
+                  onClick={switchCamera}
+                  disabled={isLoading || isCapturing}
+                  className="absolute top-4 left-4 bg-black/50 hover:bg-black/70 
+                             rounded-full p-3 transition-colors disabled:opacity-50"
+                  title={`Switch to ${facingMode === 'user' ? 'back' : 'front'} camera`}
+                >
+                  <SwitchCamera className="w-5 h-5 text-white" />
+                </button>
+
+                {/* Camera Mode Indicator */}
+                <div className="absolute top-4 right-4 bg-black/50 rounded-full px-3 py-1">
+                  <span className="text-white text-xs font-medium">
+                    {facingMode === 'user' ? '🤳 Front' : '📷 Back'}
+                  </span>
+                </div>
+
+                {/* Loading Overlay */}
+                {isLoading && (
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-2 border-green-400 border-t-transparent mx-auto mb-2"></div>
+                      <p className="text-white text-sm">Switching camera...</p>
+                    </div>
+                  </div>
+                )}
               </div>
               
               <div className="p-6 text-center bg-gray-900">
                 <button
                   onClick={capturePhoto}
-                  disabled={isCapturing}
-                  className="btn-celebration inline-flex items-center gap-3 text-lg"
+                  disabled={isCapturing || isLoading}
+                  className="btn-celebration inline-flex items-center gap-3 text-lg disabled:opacity-50"
                 >
                   <Camera className="w-6 h-6" />
-                  {isCapturing ? 'Capturing...' : 'Take Photo'}
+                  {isCapturing ? 'Capturing...' : isLoading ? 'Loading...' : 'Take Photo'}
                 </button>
               </div>
             </>
