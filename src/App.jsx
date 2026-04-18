@@ -71,20 +71,36 @@ const makeLocalId = () => {
 
 function AppContent() {
   const { user, login, isLoading: authLoading } = useAuth();
-  const [currentView, setCurrentView] = useState('upload'); // 'upload' or 'gallery'
+  const [isMobileViewport, setIsMobileViewport] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 640 : false);
+  const [currentView, setCurrentView] = useState('gallery'); // 'upload' or 'gallery'
   const [showCamera, setShowCamera] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [photos, setPhotos] = useState([]);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [liveNotification, setLiveNotification] = useState(null);
+  const [showFeedPrompt, setShowFeedPrompt] = useState(false);
   const notificationTimerRef = useRef(null);
+  const feedPromptTimerRef = useRef(null);
   const initialSnapshotSeenRef = useRef(false);
 
   const goHome = () => {
-    setCurrentView('upload');
+    setCurrentView('gallery');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobileViewport(window.innerWidth < 640);
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
 
   const showUploadNotification = (photo) => {
     if (!photo || photo.authorId === user?.id) return;
@@ -147,6 +163,9 @@ function AppContent() {
       if (notificationTimerRef.current) {
         clearTimeout(notificationTimerRef.current);
       }
+      if (feedPromptTimerRef.current) {
+        clearTimeout(feedPromptTimerRef.current);
+      }
     };
   }, [user?.id]);
 
@@ -180,6 +199,7 @@ function AppContent() {
   const handlePhotoUpload = async (file, caption = '') => {
     setIsUploading(true);
     setUploadSuccess(false);
+    setShowFeedPrompt(false);
 
     try {
       console.log('[Byte Booth] Upload started:', {
@@ -215,7 +235,16 @@ function AppContent() {
       setPhotos(prev => [localPhoto, ...prev]);
       upsertLocalPhoto(localPhoto);
       setUploadSuccess(true);
+      setShowFeedPrompt(true);
       console.log('[Byte Booth] Local photo inserted immediately. Firestore sync started...');
+
+      if (feedPromptTimerRef.current) {
+        clearTimeout(feedPromptTimerRef.current);
+      }
+
+      feedPromptTimerRef.current = setTimeout(() => {
+        setShowFeedPrompt(false);
+      }, 6000);
 
       try {
         console.log('[Byte Booth] Saving photo metadata to Firestore...');
@@ -242,6 +271,10 @@ function AppContent() {
       }
 
       console.log('[Byte Booth] Upload flow completed. Photo added to feed.');
+
+      setCurrentView('gallery');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setShowFeedPrompt(false);
 
       setTimeout(() => {
         setUploadSuccess(false);
@@ -271,7 +304,7 @@ function AppContent() {
               type="button"
               onClick={goHome}
               className="flex items-center gap-3 text-left transition-opacity hover:opacity-90"
-              aria-label="Go to upload landing page"
+              aria-label="Go to feed landing page"
             >
               <div className="bg-gradient-to-r from-amber-500 to-yellow-400 p-2 rounded-lg"
                    style={{ boxShadow: '0 0 12px rgba(212, 175, 55, 0.4)' }}>
@@ -287,7 +320,7 @@ function AppContent() {
               </div>
             </button>
 
-            <div className="flex items-center gap-1 sm:gap-2">
+            <div className="hidden sm:flex items-center gap-1 sm:gap-2">
               <button
                 onClick={() => setCurrentView('upload')}
                 className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
@@ -319,6 +352,38 @@ function AppContent() {
           </div>
         </div>
       </nav>
+
+      {isMobileViewport && (
+        <button
+          type="button"
+          onClick={() => {
+            if (currentView === 'gallery' || showFeedPrompt) {
+              setCurrentView('upload');
+              setShowFeedPrompt(false);
+            } else {
+              setCurrentView('gallery');
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full px-4 py-3 shadow-2xl transition-transform active:scale-95 sm:hidden"
+          style={{ background: 'linear-gradient(to right, #f59e0b, #fbbf24)', color: '#1c1917' }}
+        >
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-stone-900/10">
+            {currentView === 'gallery' || showFeedPrompt ? (
+              <Upload className="h-4 w-4" />
+            ) : (
+              <ImageIcon className="h-4 w-4" />
+            )}
+          </div>
+          <span className="text-sm font-bold">
+            {currentView === 'gallery'
+              ? 'Upload'
+              : showFeedPrompt || uploadSuccess
+                ? 'View Feed'
+                : 'Feed'}
+          </span>
+        </button>
+      )}
 
       {liveNotification && (
         <div className="fixed top-20 right-4 left-4 sm:left-auto sm:right-6 z-50 flex justify-end pointer-events-none">
