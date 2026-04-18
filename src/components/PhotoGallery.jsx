@@ -11,7 +11,8 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
   const [likingPhotos, setLikingPhotos] = useState(new Set()); // Track photos being liked
   const [sortBy, setSortBy] = useState('random'); // 'random', 'recent', 'likes', 'trending'
   const [shuffleSeed, setShuffleSeed] = useState(Math.random()); // For consistent random order
-  const [initializedWithPhotos, setInitializedWithPhotos] = useState(false); // Track initialization
+  const [sharePhotoItem, setSharePhotoItem] = useState(null);
+  const [shareBusy, setShareBusy] = useState(false);
   const { user, logout } = useAuth();
   const userId = user?.id || 'anonymous';
 
@@ -21,7 +22,7 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
       id: 'mock-1',
       url: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=600',
       fileName: 'team-celebration.jpg',
-      caption: '🎉 Amazing team celebration at Badge Day! From rookie to basher - what a journey! #ByteBashBlitz #BadgeDay2025',
+      caption: '🎉 Amazing team celebration at Badge Day! From rookie to basher - what a journey! #ByteBashBlitz #BadgeDay2026',
       uploadedAt: new Date(Date.now() - 1000 * 60 * 30),
       likes: 12,
       likedBy: ['user1', 'user2'],
@@ -55,18 +56,15 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
     }
   ];
 
-  // Initialize with mock data or real photos, but avoid constant updates
+  // Keep the gallery aligned with the latest App photo list, while preserving
+  // mock data only when there are no real photos yet.
   useEffect(() => {
-    if (photos.length > 0 && !initializedWithPhotos) {
-      // First time we get real photos - initialize
+    if (photos.length > 0) {
       setLocalPhotos(photos);
-      setInitializedWithPhotos(true);
     } else if (photos.length === 0 && localPhotos.length === 0) {
-      // No photos at all - use mock data
       setLocalPhotos(mockPhotos);
     }
-    // Don't update localPhotos for subsequent photo changes to prevent flickering
-  }, [photos.length, initializedWithPhotos]);
+  }, [photos, localPhotos.length]);
 
   // Use either local photos or mock photos, but don't constantly switch
   const displayPhotos = localPhotos.length > 0 ? localPhotos : mockPhotos;
@@ -185,19 +183,19 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
     }
   }, [likingPhotos, userId, isLiked]);
 
-  // Generate avatar for any user
+  // Generate avatar for any user — uses HP house colours
   const getAuthorAvatar = (authorName) => {
     const colors = [
-      'from-red-400 to-red-600',
-      'from-blue-400 to-blue-600', 
-      'from-green-400 to-green-600',
-      'from-purple-400 to-purple-600',
-      'from-pink-400 to-pink-600',
-      'from-indigo-400 to-indigo-600',
-      'from-yellow-400 to-yellow-600',
-      'from-teal-400 to-teal-600'
+      'from-red-700 to-yellow-500',    // Gryffindor
+      'from-green-800 to-slate-400',   // Slytherin
+      'from-blue-900 to-blue-400',     // Ravenclaw
+      'from-yellow-500 to-amber-800',  // Hufflepuff
+      'from-purple-700 to-indigo-500', // Magic
+      'from-rose-700 to-orange-500',   // Sunset
+      'from-amber-500 to-yellow-300',  // Gold
+      'from-violet-700 to-purple-500', // Violet
     ];
-    
+
     const colorIndex = authorName.length % colors.length;
     return colors[colorIndex];
   };
@@ -261,49 +259,75 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
 
   // Smart Image component that handles R2 URLs
   const SmartImage = ({ photo, className, onClick, onError }) => {
-    const [imageSrc, setImageSrc] = useState(photo.url);
+    const [imageSrc, setImageSrc] = useState(photo.id.startsWith('mock-') ? photo.url : (imageUrls[photo.id] || ''));
     const [isLoadingPresigned, setIsLoadingPresigned] = useState(false);
     const [hasError, setHasError] = useState(false);
 
-    const handleImageError = async () => {
-      if (hasError || isLoadingPresigned) return; // Prevent infinite loops
-      
-      // If this is an R2 photo and we haven't tried presigned URL yet
-      if (photo.s3Key && !imageUrls[photo.id]) {
-        try {
-          setIsLoadingPresigned(true);
-          console.log('🖼️ Image failed to load, generating presigned URL for:', photo.s3Key);
-          const presignedUrl = await generateDownloadUrl(photo.s3Key);
-          
-          setImageUrls(prev => ({
-            ...prev,
-            [photo.id]: presignedUrl
-          }));
-          
-          setImageSrc(presignedUrl);
-        } catch (error) {
-          console.error('Failed to generate presigned URL for viewing:', error);
-          setHasError(true);
-          if (onError) onError();
-        } finally {
-          setIsLoadingPresigned(false);
+    const loadPresignedUrl = useCallback(async () => {
+      if (hasError || isLoadingPresigned) return;
+
+      if (!photo.s3Key) {
+        if (photo.url) {
+          setImageSrc(photo.url);
+          return;
         }
-      } else {
+
         setHasError(true);
         if (onError) onError();
+        return;
       }
+
+      try {
+        setIsLoadingPresigned(true);
+        console.log('🖼️ Loading presigned view URL for:', photo.s3Key);
+        const presignedUrl = imageUrls[photo.id] || await generateDownloadUrl(photo.s3Key);
+
+        setImageUrls(prev => ({
+          ...prev,
+          [photo.id]: presignedUrl
+        }));
+
+        setImageSrc(presignedUrl);
+      } catch (error) {
+        console.error('Failed to load presigned URL for viewing:', error);
+        setHasError(true);
+        if (onError) onError();
+      } finally {
+        setIsLoadingPresigned(false);
+      }
+    }, [hasError, isLoadingPresigned, imageUrls, photo, onError]);
+
+    const handleImageError = () => {
+      if (photo.s3Key) {
+        loadPresignedUrl();
+        return;
+      }
+
+      setHasError(true);
+      if (onError) onError();
     };
 
     // Use cached presigned URL if available
     useEffect(() => {
+      if (photo.id.startsWith('mock-')) {
+        setImageSrc(photo.url);
+        return;
+      }
+
       if (imageUrls[photo.id] && imageSrc !== imageUrls[photo.id]) {
         setImageSrc(imageUrls[photo.id]);
+        return;
       }
-    }, [imageUrls, photo.id]);
+
+      if (!imageSrc && photo.s3Key) {
+        loadPresignedUrl();
+      }
+    }, [imageUrls, imageSrc, loadPresignedUrl, photo.id, photo.s3Key, photo.url]);
 
     if (hasError) {
       return (
-        <div className={`${className} bg-gray-800 flex items-center justify-center text-gray-400`}>
+        <div className={`${className} flex items-center justify-center`}
+             style={{ backgroundColor: '#12101C', color: 'rgba(212,175,55,0.5)' }}>
           <div className="text-center">
             <div className="text-4xl mb-2">📷</div>
             <p className="text-sm">Image unavailable</p>
@@ -320,10 +344,12 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
           className={className}
           onClick={onClick}
           onError={handleImageError}
+          loading="lazy"
+          decoding="async"
         />
         {isLoadingPresigned && (
-          <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-6 w-6 border-2 border-green-400 border-t-transparent"></div>
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+            <div className="animate-spin rounded-full h-6 w-6 border-2 border-amber-400 border-t-transparent"></div>
           </div>
         )}
       </div>
@@ -379,6 +405,112 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
     }
   };
 
+  const buildShareMessage = (photo, shareUrl) => {
+    const caption = photo.caption?.trim();
+    const title = photo.author
+      ? `${photo.author} shared a Badge Day memory`
+      : 'Byte Booth Badge Day memory';
+
+    return caption
+      ? `${title}\n${caption}\n\nOpen here: ${shareUrl}`
+      : `${title}\n\nOpen here: ${shareUrl}`;
+  };
+
+  const copyToClipboard = async (text) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    return false;
+  };
+
+  const getShareUrl = async (photo) => {
+    if (photo.s3Key) {
+      return generateDownloadUrl(photo.s3Key);
+    }
+    return photo.url;
+  };
+
+  const shareToWhatsApp = async (photo) => {
+    try {
+      setShareBusy(true);
+      const shareUrl = await getShareUrl(photo);
+      const message = buildShareMessage(photo, shareUrl);
+      window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      console.error('WhatsApp share failed:', error);
+      alert('Could not open WhatsApp share.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const shareToInstagram = async (photo) => {
+    try {
+      setShareBusy(true);
+      const shareUrl = await getShareUrl(photo);
+      const caption = photo.caption?.trim()
+        ? `${photo.caption.trim()}\n\n${shareUrl}`
+        : `${photo.author || 'Byte Booth'} on Badge Day\n\n${shareUrl}`;
+
+      await copyToClipboard(caption);
+      window.open('https://www.instagram.com/', '_blank', 'noopener,noreferrer');
+      alert('Instagram caption and link copied. Paste it into Instagram.');
+    } catch (error) {
+      console.error('Instagram share failed:', error);
+      alert('Could not prepare Instagram share.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const shareViaNativeSheet = async (photo) => {
+    try {
+      setShareBusy(true);
+      const shareUrl = await getShareUrl(photo);
+      const shareText = buildShareMessage(photo, shareUrl);
+
+      if (navigator.share) {
+        await navigator.share({
+          title: photo.author ? `${photo.author} on Byte Booth` : 'Byte Booth Badge Day',
+          text: shareText,
+          url: shareUrl,
+        });
+        return;
+      }
+
+      const copied = await copyToClipboard(shareText);
+      if (copied) {
+        alert('Share text copied to clipboard.');
+      } else {
+        window.prompt('Copy this share text:', shareText);
+      }
+    } catch (error) {
+      console.error('Native share failed:', error);
+      alert('Could not share from this device.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const copyShareLink = async (photo) => {
+    try {
+      setShareBusy(true);
+      const shareUrl = await getShareUrl(photo);
+      const copied = await copyToClipboard(shareUrl);
+      if (copied) {
+        alert('Link copied to clipboard.');
+      } else {
+        window.prompt('Copy this link:', shareUrl);
+      }
+    } catch (error) {
+      console.error('Copy link failed:', error);
+      alert('Could not copy the link.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
   // Instagram-style Feed Post Component (memoized to prevent unnecessary re-renders)
   const FeedPost = React.memo(({ photo }) => {
     const liked = isLiked(photo);
@@ -386,7 +518,7 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
     const isLiking = likingPhotos.has(photo.id);
     
     return (
-      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden mb-6">
+      <div className="rounded-lg overflow-hidden mb-4 lg:mb-0" style={{ backgroundColor: '#1A1628', border: '1px solid rgba(212,175,55,0.2)' }}>
         {/* Post Header */}
         <div className="flex items-center justify-between p-4">
           <div className="flex items-center space-x-3">
@@ -397,17 +529,20 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <p className="text-white font-semibold text-sm">{photo.author || 'Anonymous User'}</p>
+                <p className="font-semibold text-sm text-amber-100">{photo.author || 'Anonymous User'}</p>
                 {isOwnPost && (
-                  <span className="text-xs bg-green-500 text-white px-2 py-0.5 rounded-full">
+                  <span className="text-xs px-2 py-0.5 rounded-full font-semibold text-stone-900"
+                        style={{ background: 'linear-gradient(to right, #f59e0b, #fbbf24)' }}>
                     You
                   </span>
                 )}
               </div>
-              <p className="text-gray-400 text-xs">{formatTimeAgo(photo)}</p>
+              <p className="text-xs" style={{ color: 'rgba(212,175,55,0.5)' }}>{formatTimeAgo(photo)}</p>
             </div>
           </div>
-          <button className="text-gray-400 hover:text-white transition-colors">
+          <button className="transition-colors" style={{ color: 'rgba(212,175,55,0.4)' }}
+                  onMouseEnter={(e) => e.currentTarget.style.color = '#fcd34d'}
+                  onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(212,175,55,0.4)'}>
             <MoreHorizontal className="w-5 h-5" />
           </button>
         </div>
@@ -416,7 +551,7 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
         <div className="relative bg-black">
           <SmartImage
             photo={photo}
-            className="w-full h-auto max-h-[600px] object-cover"
+            className="w-full h-auto max-h-[500px] lg:max-h-[380px] object-cover"
           />
         </div>
 
@@ -436,42 +571,52 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
                   <div className="absolute inset-0 rounded-full animate-ping bg-red-400 opacity-20"></div>
                 )}
               </button>
-              <button className="text-gray-400 hover:text-white transition-colors">
+              <button className="transition-colors" style={{ color: 'rgba(212,175,55,0.45)' }}
+                      onMouseEnter={(e) => e.currentTarget.style.color = '#fcd34d'}
+                      onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(212,175,55,0.45)'}>
                 <MessageCircle className="w-6 h-6" />
               </button>
-              <button className="text-gray-400 hover:text-white transition-colors">
+                    <button className="transition-colors" style={{ color: 'rgba(212,175,55,0.45)' }}
+                      onClick={() => setSharePhotoItem(photo)}
+                      onMouseEnter={(e) => e.currentTarget.style.color = '#fcd34d'}
+                      onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(212,175,55,0.45)'}>
                 <Share className="w-6 h-6" />
               </button>
             </div>
             <div className="flex items-center space-x-3">
               <button
                 onClick={() => downloadPhoto(photo)}
-                className="text-gray-400 hover:text-green-400 transition-colors"
+                className="transition-colors"
+                style={{ color: 'rgba(212,175,55,0.45)' }}
+                onMouseEnter={(e) => e.currentTarget.style.color = '#fbbf24'}
+                onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(212,175,55,0.45)'}
                 title="Download"
               >
                 <Download className="w-5 h-5" />
               </button>
-              <button className="text-gray-400 hover:text-white transition-colors">
+              <button className="transition-colors" style={{ color: 'rgba(212,175,55,0.45)' }}
+                      onMouseEnter={(e) => e.currentTarget.style.color = '#fcd34d'}
+                      onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(212,175,55,0.45)'}>
                 <Bookmark className="w-6 h-6" />
               </button>
             </div>
           </div>
 
           {/* Likes */}
-          <p className="text-white font-semibold text-sm mb-2">
+          <p className="font-semibold text-sm mb-2 text-amber-200">
             {photo.likes > 0 && `${photo.likes} ${photo.likes === 1 ? 'like' : 'likes'}`}
           </p>
 
           {/* Caption */}
           {photo.caption && (
-            <div className="text-white text-sm mb-2">
-              <span className="font-semibold mr-2">{photo.author || 'Anonymous User'}</span>
+            <div className="text-sm mb-2 text-amber-100">
+              <span className="font-semibold mr-2 text-amber-300">{photo.author || 'Anonymous User'}</span>
               <span>{photo.caption}</span>
             </div>
           )}
 
           {/* File info */}
-          <p className="text-gray-400 text-xs">
+          <p className="text-xs" style={{ color: 'rgba(212,175,55,0.35)' }}>
             {photo.fileName}
           </p>
         </div>
@@ -481,13 +626,13 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
 
   if (isLoading) {
     return (
-      <div className="w-full max-w-lg mx-auto">
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-8 text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-2 border-green-400 border-t-transparent mx-auto mb-4"></div>
-          <h3 className="text-lg font-semibold text-white mb-2">
-            Loading photos...
+      <div className="w-full max-w-lg lg:max-w-5xl mx-auto">
+        <div className="rounded-lg p-8 text-center" style={{ backgroundColor: '#1A1628', border: '1px solid rgba(212,175,55,0.2)' }}>
+          <div className="animate-spin rounded-full h-12 w-12 border-2 border-amber-400 border-t-transparent mx-auto mb-4"></div>
+          <h3 className="text-lg font-semibold font-display text-amber-300 mb-2">
+            Summoning memories...
           </h3>
-          <p className="text-gray-400 text-sm">
+          <p className="text-sm" style={{ color: 'rgba(212,175,55,0.55)' }}>
             Fetching the latest Badge Day moments
           </p>
         </div>
@@ -496,9 +641,9 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
   }
 
   return (
-    <div className="w-full max-w-lg mx-auto">
+    <div className="w-full max-w-lg lg:max-w-5xl mx-auto">
       {/* Header with User Info and Sorting */}
-      <div className="flex items-center justify-between mb-6 px-4">
+      <div className="flex items-center justify-between mb-4 sm:mb-6 px-2 sm:px-4">
         <div className="flex items-center gap-3">
           <div className={`w-10 h-10 bg-gradient-to-r ${user?.avatar?.gradient || 'from-green-400 to-blue-500'} rounded-full flex items-center justify-center`}>
             {user?.avatar?.initials ? (
@@ -508,10 +653,10 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
             )}
           </div>
           <div>
-            <h2 className="text-xl font-bold text-white">
+            <h2 className="text-xl font-bold font-display text-amber-300">
               {user?.username || 'Anonymous'}
             </h2>
-            <p className="text-gray-400 text-sm">Badge Day Feed</p>
+            <p className="text-sm" style={{ color: 'rgba(212,175,55,0.55)' }}>Badge Day Feed</p>
           </div>
         </div>
         
@@ -519,21 +664,25 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
           {onRefresh && (
             <button
               onClick={() => {
-                // Manual refresh - only when user explicitly requests it
-                // This will reload from server but maintain optimistic updates
-                setInitializedWithPhotos(false); // Allow re-initialization
+                setInitializedWithPhotos(false);
                 onRefresh();
               }}
-              className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors text-gray-300 hover:text-white"
+              className="p-2 rounded-lg transition-colors"
+              style={{ backgroundColor: 'rgba(212,175,55,0.1)', color: 'rgba(212,175,55,0.7)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(212,175,55,0.2)'; e.currentTarget.style.color = '#fcd34d'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(212,175,55,0.1)'; e.currentTarget.style.color = 'rgba(212,175,55,0.7)'; }}
               title="Refresh feed (get latest posts)"
             >
               <RefreshCw className="w-5 h-5" />
             </button>
           )}
-          
+
           <button
             onClick={logout}
-            className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors text-gray-300 hover:text-red-400"
+            className="p-2 rounded-lg transition-colors"
+            style={{ backgroundColor: 'rgba(212,175,55,0.1)', color: 'rgba(212,175,55,0.7)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(116,0,1,0.3)'; e.currentTarget.style.color = '#fca5a5'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(212,175,55,0.1)'; e.currentTarget.style.color = 'rgba(212,175,55,0.7)'; }}
             title="Logout"
           >
             <LogOut className="w-5 h-5" />
@@ -542,63 +691,38 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
       </div>
 
       {/* Sorting Options */}
-      <div className="mb-6 px-4">
-        <div className="flex items-center gap-2 bg-gray-900 rounded-lg p-1 border border-gray-800 overflow-x-auto">
-          <button
-            onClick={() => {
-              setSortBy('random');
-              setShuffleSeed(Math.random()); // Generate new shuffle
-            }}
-            className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-              sortBy === 'random'
-                ? 'bg-purple-500 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
-            }`}
-          >
-            <Shuffle className="w-4 h-4" />
-            Random
-          </button>
-          
-          <button
-            onClick={() => setSortBy('recent')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-              sortBy === 'recent'
-                ? 'bg-green-500 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
-            }`}
-          >
-            <Calendar className="w-4 h-4" />
-            Recent
-          </button>
-          
-          <button
-            onClick={() => setSortBy('likes')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-              sortBy === 'likes'
-                ? 'bg-red-500 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
-            }`}
-          >
-            <Heart className="w-4 h-4" />
-            Most Liked
-          </button>
-          
-          <button
-            onClick={() => setSortBy('trending')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-              sortBy === 'trending'
-                ? 'bg-blue-500 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
-            }`}
-          >
-            <TrendingUp className="w-4 h-4" />
-            Trending
-          </button>
+      <div className="mb-4 sm:mb-6 px-2 sm:px-4">
+        <div className="flex items-center gap-1 sm:gap-2 rounded-lg p-1 overflow-x-auto"
+             style={{ backgroundColor: '#1A1628', border: '1px solid rgba(212,175,55,0.2)' }}>
+          {[
+            { key: 'random', label: 'Random', icon: <Shuffle className="w-4 h-4" />, activeStyle: { backgroundColor: '#6B21A8', color: '#fde68a' } },
+            { key: 'recent', label: 'Recent', icon: <Calendar className="w-4 h-4" />, activeStyle: { background: 'linear-gradient(to right, #f59e0b, #fbbf24)', color: '#1c1917' } },
+            { key: 'likes', label: 'Most Liked', icon: <Heart className="w-4 h-4" />, activeStyle: { backgroundColor: '#740001', color: '#fde68a' } },
+            { key: 'trending', label: 'Trending', icon: <TrendingUp className="w-4 h-4" />, activeStyle: { backgroundColor: '#0E1A40', color: '#93c5fd' } },
+          ].map(({ key, label, icon, activeStyle }) => (
+            <button
+              key={key}
+              onClick={() => {
+                setSortBy(key);
+                if (key === 'random') setShuffleSeed(Math.random());
+              }}
+              className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap"
+              style={sortBy === key
+                ? activeStyle
+                : { color: 'rgba(212,175,55,0.5)' }
+              }
+              onMouseEnter={(e) => { if (sortBy !== key) e.currentTarget.style.color = '#fcd34d'; }}
+              onMouseLeave={(e) => { if (sortBy !== key) e.currentTarget.style.color = 'rgba(212,175,55,0.5)'; }}
+            >
+              {icon}
+              {label}
+            </button>
+          ))}
         </div>
-        
-        <p className="text-gray-500 text-xs mt-2 text-center">
-          {sortBy === 'random' && 'Discover photos in random order • Click Random again to re-shuffle'}
-          {sortBy === 'recent' && 'Latest photos first'}
+
+        <p className="text-xs mt-2 text-center" style={{ color: 'rgba(212,175,55,0.4)' }}>
+          {sortBy === 'random' && 'Discover memories in random order • Click Random again to re-shuffle'}
+          {sortBy === 'recent' && 'Latest memories first'}
           {sortBy === 'likes' && 'Photos with most likes'}
           {sortBy === 'trending' && 'Popular photos from last 24h'}
         </p>
@@ -606,20 +730,93 @@ const PhotoGallery = ({ photos = [], isLoading = false, onRefresh }) => {
 
       {/* Feed */}
       {displayPhotos.length === 0 ? (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-8 text-center">
-          <User className="w-16 h-16 text-gray-600 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-white mb-2">
-            No posts yet
+        <div className="rounded-lg p-8 text-center" style={{ backgroundColor: '#1A1628', border: '1px solid rgba(212,175,55,0.2)' }}>
+          <User className="w-16 h-16 mx-auto mb-4" style={{ color: 'rgba(212,175,55,0.3)' }} />
+          <h3 className="text-lg font-semibold font-display text-amber-300 mb-2">
+            The Pensieve is empty
           </h3>
-          <p className="text-gray-400 text-sm">
-            Be the first to share a moment from Badge Day!
+          <p className="text-sm" style={{ color: 'rgba(212,175,55,0.5)' }}>
+            Be the first to share a memory from Badge Day!
           </p>
         </div>
       ) : (
-        <div className="space-y-0">
+        <div className="grid grid-cols-1 lg:grid-cols-2 lg:gap-4">
           {sortedPhotos.map((photo) => (
             <FeedPost key={photo.id} photo={photo} />
           ))}
+        </div>
+      )}
+
+      {sharePhotoItem && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 px-3 pb-3 sm:items-center sm:px-4 sm:pb-4">
+          <div className="w-full max-w-md rounded-3xl border backdrop-blur-xl shadow-2xl"
+               style={{ backgroundColor: 'rgba(26, 22, 40, 0.98)', borderColor: 'rgba(212,175,55,0.25)' }}>
+            <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: 'rgba(212,175,55,0.15)' }}>
+              <div>
+                <p className="text-sm font-semibold text-amber-300">Share this photo</p>
+                <p className="text-xs" style={{ color: 'rgba(212,175,55,0.55)' }}>
+                  Viral sharing for phone users
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSharePhotoItem(null)}
+                className="rounded-full px-3 py-1 text-sm font-semibold text-amber-300/70 hover:text-amber-200"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="px-4 pt-4">
+              <div className="mb-4 overflow-hidden rounded-2xl border" style={{ borderColor: 'rgba(212,175,55,0.15)' }}>
+                <SmartImage
+                  photo={sharePhotoItem}
+                  className="h-48 w-full object-cover"
+                />
+              </div>
+              <p className="mb-4 text-sm" style={{ color: 'rgba(212,175,55,0.72)' }}>
+                Send Badge Day memories through WhatsApp, Instagram, or copy a link.
+              </p>
+            </div>
+
+            <div className="grid gap-2 px-4 pb-4 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={shareBusy}
+                onClick={() => shareToWhatsApp(sharePhotoItem)}
+                className="btn-celebration flex items-center justify-center gap-2 py-3 text-sm disabled:opacity-60"
+              >
+                Share to WhatsApp
+              </button>
+              <button
+                type="button"
+                disabled={shareBusy}
+                onClick={() => shareToInstagram(sharePhotoItem)}
+                className="flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors disabled:opacity-60"
+                style={{ borderColor: 'rgba(212,175,55,0.3)', color: '#fde68a', backgroundColor: 'rgba(42,36,64,0.85)' }}
+              >
+                Share to Instagram
+              </button>
+              <button
+                type="button"
+                disabled={shareBusy}
+                onClick={() => copyShareLink(sharePhotoItem)}
+                className="flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors disabled:opacity-60 sm:col-span-2"
+                style={{ borderColor: 'rgba(212,175,55,0.3)', color: '#fde68a', backgroundColor: 'rgba(42,36,64,0.85)' }}
+              >
+                Copy Link
+              </button>
+              <button
+                type="button"
+                disabled={shareBusy}
+                onClick={() => shareViaNativeSheet(sharePhotoItem)}
+                className="flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-colors disabled:opacity-60 sm:col-span-2"
+                style={{ borderColor: 'rgba(212,175,55,0.3)', color: '#fde68a', backgroundColor: 'rgba(42,36,64,0.85)' }}
+              >
+                Native Share
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

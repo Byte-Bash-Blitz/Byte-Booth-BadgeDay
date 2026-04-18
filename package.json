@@ -1,13 +1,16 @@
 {
-  "name": "photo-booth",
+  "name": "byte-booth",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "health:backend": "node scripts/healthcheck.mjs",
+    "health:r2": "node scripts/healthcheck.mjs --r2-only",
+    "health:firestore": "node scripts/healthcheck.mjs --firestore-only"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.856.0",

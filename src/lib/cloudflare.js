@@ -3,14 +3,26 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 
+const makeUniqueKeyPart = () => (
+  globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+);
+
+const sanitizeFileName = (fileName = 'photo.jpg') => fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+
 // R2 configuration
 const R2_CONFIG = {
-  endpoint: import.meta.env.VITE_R2_ENDPOINT || 'https://8663c4e6e2afd68276b4120bed02b998.r2.cloudflarestorage.com',
+  endpoint: import.meta.env.VITE_R2_ENDPOINT
+    || (import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID
+      ? `https://${import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`
+      : 'https://8663c4e6e2afd68276b4120bed02b998.r2.cloudflarestorage.com'),
   region: 'auto',
   credentials: {
     accessKeyId: import.meta.env.VITE_R2_ACCESS_KEY_ID,
     secretAccessKey: import.meta.env.VITE_R2_SECRET_ACCESS_KEY,
   },
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
 };
 
 // Initialize R2 client
@@ -20,7 +32,7 @@ export const r2Client = new S3Client(R2_CONFIG);
 export const generateUploadUrl = async (fileName, fileType) => {
   console.log('🔑 Generating presigned URL for:', fileName, 'type:', fileType);
   
-  const key = `photos/${Date.now()}-${fileName}`;
+  const key = `photos/${Date.now()}-${makeUniqueKeyPart()}-${sanitizeFileName(fileName)}`;
   console.log('📁 S3 Key:', key);
   
   const command = new PutObjectCommand({
@@ -87,6 +99,8 @@ export const uploadPhotoToR2 = async (file) => {
   try {
     const fileName = file.name;
     const fileType = file.type || 'application/octet-stream';
+    let uploadUrl = '';
+    let s3Key = '';
     
     // Debug environment variables
     console.log('🔧 R2 Configuration:', {
@@ -105,8 +119,8 @@ export const uploadPhotoToR2 = async (file) => {
     
     console.log('🔗 Generating presigned URL...');
     const uploadResult = await generateUploadUrl(fileName, fileType);
-    const uploadUrl = uploadResult.url;
-    const s3Key = uploadResult.key;
+    uploadUrl = uploadResult.url;
+    s3Key = uploadResult.key;
     console.log('✅ Generated upload URL:', uploadUrl.substring(0, 120) + '...');
     console.log('🔑 S3 Key:', s3Key);
     
@@ -170,18 +184,15 @@ export const uploadPhotoToR2 = async (file) => {
       message: error.message,
       stack: error.stack?.split('\n').slice(0, 3)
     });
+
+    if (error instanceof TypeError && /Failed to fetch|NetworkError/i.test(error.message || '')) {
+      throw new Error(
+        `R2 upload could not reach the bucket from this browser. Configure R2 CORS to allow ${window.location.origin} ` +
+        `and your production domain, with methods PUT, GET, HEAD, and OPTIONS.`
+      );
+    }
     
     // Don't fallback automatically - let's see what's wrong first
     throw error;
   }
 };
-
-// Helper function to convert file to base64 (for debugging)
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result.split(',')[1]);
-    reader.onerror = error => reject(error);
-  });
-}

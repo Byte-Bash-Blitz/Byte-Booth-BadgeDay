@@ -1,21 +1,39 @@
 // Photo service for managing photo data with Firestore
-import { collection, addDoc, getDocs, orderBy, query, updateDoc, doc, increment, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { collection, addDoc, getDocs, orderBy, query, updateDoc, doc, increment, arrayUnion, arrayRemove, onSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 
 // Collection name in Firestore
 const PHOTOS_COLLECTION = 'badge-day-photos';
+const FIRESTORE_TIMEOUT_MS = Number(import.meta.env.VITE_FIRESTORE_TIMEOUT_MS || 2500);
+
+const withTimeout = (promise, label) =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${FIRESTORE_TIMEOUT_MS}ms`));
+    }, FIRESTORE_TIMEOUT_MS);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
 
 // Save photo metadata to Firestore
 export const savePhotoToFirestore = async (photoData) => {
   try {
-    const docRef = await addDoc(collection(db, PHOTOS_COLLECTION), {
+    const docRef = await withTimeout(addDoc(collection(db, PHOTOS_COLLECTION), {
       ...photoData,
       uploadedAt: new Date(),
       likes: 0,
       likedBy: [],
       caption: photoData.caption || '',
       event: 'badge-day-2025'
-    });
+    }), 'savePhotoToFirestore');
     
     return {
       id: docRef.id,
@@ -39,7 +57,7 @@ export const getPhotosFromFirestore = async () => {
       orderBy('uploadedAt', 'desc')
     );
     
-    const querySnapshot = await getDocs(q);
+    const querySnapshot = await withTimeout(getDocs(q), 'getPhotosFromFirestore');
     const photos = [];
     
     querySnapshot.forEach((doc) => {
@@ -56,6 +74,46 @@ export const getPhotosFromFirestore = async () => {
     // Return empty array if Firestore fails
     return [];
   }
+};
+
+// Subscribe to the photo feed for realtime updates and new-upload notifications
+export const subscribeToPhotoFeed = (onUpdate, onPhotoAdded, onError) => {
+  const q = query(
+    collection(db, PHOTOS_COLLECTION),
+    orderBy('uploadedAt', 'desc')
+  );
+
+  let initialized = false;
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const photos = snapshot.docs.map((docSnapshot) => ({
+        id: docSnapshot.id,
+        ...docSnapshot.data(),
+        uploadedAt: docSnapshot.data().uploadedAt?.toDate?.() || new Date()
+      }));
+
+      if (initialized && onPhotoAdded) {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type !== 'added') return;
+          const photo = {
+            id: change.doc.id,
+            ...change.doc.data(),
+            uploadedAt: change.doc.data().uploadedAt?.toDate?.() || new Date()
+          };
+          onPhotoAdded(photo);
+        });
+      }
+
+      initialized = true;
+      onUpdate(photos);
+    },
+    (error) => {
+      console.error('Error subscribing to photo feed:', error);
+      if (onError) onError(error);
+    }
+  );
 };
 
 // Toggle like on a photo (Instagram-style)
@@ -75,17 +133,17 @@ export const togglePhotoLike = async (photoId, userId = 'anonymous') => {
     
     if (hasLiked) {
       // Unlike: remove user from likedBy array and decrement likes
-      await updateDoc(photoRef, {
+      await withTimeout(updateDoc(photoRef, {
         likes: increment(-1),
         likedBy: arrayRemove(userId)
-      });
+      }), 'togglePhotoLike-unlike');
       return { liked: false, newLikeCount: Math.max(0, photo.likes - 1) };
     } else {
       // Like: add user to likedBy array and increment likes
-      await updateDoc(photoRef, {
+      await withTimeout(updateDoc(photoRef, {
         likes: increment(1),
         likedBy: arrayUnion(userId)
-      });
+      }), 'togglePhotoLike-like');
       return { liked: true, newLikeCount: photo.likes + 1 };
     }
   } catch (error) {
