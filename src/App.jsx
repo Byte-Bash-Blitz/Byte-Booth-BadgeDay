@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Image as ImageIcon, Upload, Wand2, Star, Users } from 'lucide-react';
+import { Image as ImageIcon, Upload, Wand2, Star, Users } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginForm from './components/LoginForm';
 import PhotoUpload from './components/PhotoUpload';
@@ -70,10 +71,11 @@ const makeLocalId = () => {
 };
 
 function AppContent() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { user, login, isLoading: authLoading } = useAuth();
   const [isMobileViewport, setIsMobileViewport] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 640 : false);
   const [currentView, setCurrentView] = useState('gallery'); // 'upload' or 'gallery'
-  const [showCamera, setShowCamera] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [photos, setPhotos] = useState([]);
   const [uploadSuccess, setUploadSuccess] = useState(false);
@@ -86,8 +88,18 @@ function AppContent() {
 
   const goHome = () => {
     setCurrentView('gallery');
+    if (location.pathname !== '/') {
+      navigate('/');
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  useEffect(() => {
+    const view = new URLSearchParams(location.search).get('view');
+    if (view === 'upload' || view === 'gallery') {
+      setCurrentView(view);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -289,9 +301,23 @@ function AppContent() {
   };
 
   const handleCameraCapture = (file, caption = '') => {
-    setShowCamera(false);
     handlePhotoUpload(file, caption);
+    navigate('/?view=gallery');
   };
+
+  const handleCameraClose = () => {
+    navigate('/?view=upload');
+  };
+
+  if (location.pathname === '/camera') {
+    return (
+      <CameraCapture
+        onPhotoCapture={handleCameraCapture}
+        onClose={handleCameraClose}
+        isStandalonePage
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#0D0B14' }}>
@@ -428,7 +454,7 @@ function AppContent() {
         {currentView === 'upload' ? (
           <PhotoUpload
             onPhotoSelect={handlePhotoUpload}
-            onCameraOpen={() => setShowCamera(true)}
+            onCameraOpen={() => navigate('/camera')}
             isUploading={isUploading}
           />
         ) : (
@@ -439,14 +465,6 @@ function AppContent() {
           />
         )}
       </main>
-
-      {/* Camera Modal */}
-      {showCamera && (
-        <CameraCapture
-          onPhotoCapture={handleCameraCapture}
-          onClose={() => setShowCamera(false)}
-        />
-      )}
 
       {/* Footer */}
       <footer className="mt-16 backdrop-blur-sm"
