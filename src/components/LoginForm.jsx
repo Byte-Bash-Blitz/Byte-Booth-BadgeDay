@@ -20,8 +20,14 @@ const LoginForm = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4"
-         style={{ backgroundColor: '#0D0B14' }}>
+        <div className="min-h-screen flex items-center justify-center px-4"
+          style={{
+         backgroundColor: '#0D0B14',
+         backgroundImage: "linear-gradient(rgba(13, 11, 20, 0.78), rgba(13, 11, 20, 0.88)), url('/background.png')",
+         backgroundSize: 'cover',
+         backgroundPosition: 'center',
+         backgroundRepeat: 'no-repeat',
+          }}>
       <div className="w-full max-w-md">
         {/* Header */}
         <div className="text-center mb-6 sm:mb-8">
@@ -44,9 +50,15 @@ const LoginForm = ({ onLogin }) => {
         <div className="backdrop-blur-sm rounded-2xl p-5 sm:p-8"
              style={{ backgroundColor: 'rgba(26, 22, 40, 0.9)', border: '1px solid rgba(212, 175, 55, 0.3)', boxShadow: '0 0 30px rgba(212, 175, 55, 0.08)' }}>
           <div className="text-center mb-6">
-            <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
-                 style={{ background: 'linear-gradient(to right, #f59e0b, #fbbf24)', boxShadow: '0 0 20px rgba(212,175,55,0.35)' }}>
-              <User className="w-8 h-8 text-stone-900" />
+            <div
+              className="w-24 h-24 sm:w-28 sm:h-28 rounded-full flex items-center justify-center mx-auto mb-4 p-1"
+              style={{ background: 'linear-gradient(to right, #f59e0b, #fbbf24)', boxShadow: '0 0 20px rgba(212,175,55,0.35)' }}
+            >
+              <img
+                src="/harry.png"
+                alt="Harry"
+                className="w-full h-full object-cover rounded-full border-2 border-amber-300"
+              />
             </div>
             <h2 className="text-xl sm:text-2xl font-bold font-display text-amber-300 mb-2">
               Enter the Great Hall
